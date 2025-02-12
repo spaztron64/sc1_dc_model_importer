@@ -1,0 +1,121 @@
+struct Header
+{
+	char filename[20]; // likely not a filename
+	ushort vertex_pool_count;
+	ushort normal_pool_count;
+	uint triangle_strip_table_pointer;
+	ushort submesh_count;
+	ushort strip_count; // probably not strip count
+} header <bgcolor=cLtGray>;
+
+struct model_submesh_t{
+	short bone_id; // NULL on weapons?
+	short buf;
+	uint    vertex_list_pointer; // points to a vertex_list_t
+	uint    unknown; // Always 0x00000000?
+	ushort    vertex_count;
+	ushort    normal_count;
+	short     bone_rotation_x;
+	short     bone_rotation_y;
+	short     bone_rotation_z;
+	short     unknown;
+	short     bone_position_x;
+	short     bone_position_y;
+	short     bone_position_z;
+	short     parent_bone_id;
+};
+
+model_submesh_t  model_submesh_table[header.submesh_count] <bgcolor=cLtGreen>;
+
+struct vertex_list_t {
+	float       vertex_x;
+	float       vertex_y;
+	float       vertex_z;
+	ushort    vertex_index;
+	ushort    flags; // It's not clear what these do
+};
+
+struct normal_list_t{
+	float       normal_x;
+	float       normal_y;
+	float       normal_z;
+	ushort    normal_index;
+	ushort    flags; // It's not clear what these do
+};
+
+struct triangle_t{
+	ushort    vertex_index;   // Reference to a vertex index fetched from a vertex_list_t;
+	ushort    normal_index;
+	//uint    uv_coordinates; // UVs  
+	ushort u;
+	ushort v;
+};
+
+struct triangle_strip_t{
+	ubyte                    strip_length;
+	ubyte unk;
+	uchar                     uv_coordinate;  // Why are there three UV coordinates?
+	uchar                     count;
+
+	triangle_t buf[count];
+};
+
+struct VertContainer
+{
+	local uint i = 0;
+	for(i = 0; i < header.submesh_count; ++i)
+	{
+		FSeek(model_submesh_table[i].vertex_list_pointer);
+
+		struct VertDefs
+		{
+			vertex_list_t vertices[model_submesh_table[i].vertex_count];
+			normal_list_t normals[model_submesh_table[i].normal_count];
+		} vertices <bgcolor=cLtRed>;
+	}
+} vert_container;
+
+struct StripContainer
+{
+	triangle_strip_t strips <bgcolor=cLtRed>; // bootstrap strip
+	while(strips.count)
+	{
+		while(strips.count)
+		{
+			triangle_strip_t strips <bgcolor=cLtGreen>;
+		}
+
+		triangle_strip_t strips <bgcolor=cLtBlue>;
+	}
+} strip_container;
+
+/*
+Notes:
+
+- If a triangle_strip_t begins with 00000000, this likely marks the end of a strip,
+and the next 32-bit word needs to be read as the next triangle_strip_t. 
+If 00000000 is read again in a row, this marks the end of the triangle strip table.
+*/
+
+struct Unknown
+{
+	byte unk[16];
+};
+
+struct UnkContainer
+{
+	local uint i = 0;
+	for(i = 0; i < header.submesh_count; ++i)
+	{
+		if (model_submesh_table[i].unknown[0] != 0)
+		{
+			FSeek(model_submesh_table[i].unknown[0]);
+			struct
+			{
+				Unknown test[model_submesh_table[i].unknown[1]] <bgcolor=cDkBlue>;
+			} unk_container;
+		}
+	}
+} unk_container;
+
+byte i <bgcolor=cDkRed>;
