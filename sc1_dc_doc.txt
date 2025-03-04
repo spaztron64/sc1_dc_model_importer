@@ -162,8 +162,8 @@ And here's a second one:
 0xA4E to 0xA4F: halfFloat W component
 
 No, you eyes aren't fooling you, Namco encoded a W component directly into the
-model vertices. This is by all means seems very unconventional and needlessly 
-complicated for no reason, but there might be a good one in the end. Observe
+model vertices. This by all means seems very unconventional and needlessly 
+complicated for no reason, but there is a good reason for it. Observe
 the following code snippet from the game:
 
 FMOV.S    @R5+, FR0
