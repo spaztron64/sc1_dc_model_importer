@@ -1,0 +1,356 @@
+================================================================================
+                           SoulCalibur Dreamcast
+                    Character model format documentation
+                   Written by Aleksa Odzakovic, March 2025
+================================================================================
+
+Table of Contents:
+    1. Introduction
+	  1.1. Main header structure
+	  1.2. Submesh header structure
+	2. Vertex lists
+	  2.1. Appended vertices
+	3. Triangle strip table
+	4. Other data
+
+================================================================================
+1. Introduction
+================================================================================
+
+Time was short when porting SoulCalibur from a PS1-based Arcade platform to the
+wildly different Dreamcast console, so quite a few things were retained as is
+and only slightly augmented. These include the header structure of models, which
+is similar but extended, and the compression scheme which remained completely
+unchanged. Many other things were reworked to better suit the new hardware, like
+the new vertex/normal format and the switch to a triangle strip tabling scheme
+instead of individual triangles in a list.
+
+================================================================================
+1.1. Main header structure
+================================================================================
+
+As mentioned previously, the struct layout remained largely the same, being
+split into a main section and a table of submesh headers. Observe the first 0x1F
+bytes that define the main header. Remember, all data is read as little-endian:
+
+              00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
+            +------------------------------------------------
+0x00000000  | 37 21 09 06 11 07 25 06 00 00 00 00 00 00 00 00
+0x00000010  | 00 00 00 02 58 06 EF 06 C0 59 01 00 51 00 14 04
+
+0x00 to 0x17: Filename string. These usually had readable strings on Arcade
+              but are now gibberish for the most part
+0x18 to 0x1B: u32 offset to triangle strip table
+0x1C to 0x1D: u16 submesh counter. Consequently a bone counter too
+0x1E to 0x1F: Unknown. Previously thought to be a strip counter, but it's not
+
+================================================================================
+1.2. Submesh header structure
+================================================================================
+
+What follows are all the submesh headers that a model contains, which are read
+{submesh_counter} times. Here's a few of the submesh headers that follow the
+main header:
+
+              00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
+            +------------------------------------------------
+0x00000020  | 43 00 00 00 40 0A 00 00 00 00 00 00 43 00 43 00
+0x00000030  | FF 3F 00 00 FE 3F 00 00 FF FF 00 00 00 00 FF FF
+0x00000040  | 48 01 29 00 A0 12 00 00 00 00 00 00 71 01 D5 01
+0x00000050  | 00 00 00 00 00 00 00 00 CC 06 FF FF FF FF 00 00
+0x00000060  | B2 00 00 00 00 47 00 00 00 00 00 00 B2 00 CC 00
+0x00000070  | FF 3F 00 00 FE 3F 00 00 37 10 00 00 00 00 01 00
+0x00000080  | 29 00 62 00 E0 5E 00 00 00 00 00 00 8B 00 C1 00
+0x00000090  | 95 A6 FF 3F 95 E6 00 00 82 0B 00 00 C4 FA 01 00
+
+Now let's isolate the first submesh header:
+
+              00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
+            +------------------------------------------------
+0x00000020  | 43 00 00 00 40 0A 00 00 00 00 00 00 43 00 43 00
+0x00000030  | FF 3F 00 00 FE 3F 00 00 FF FF 00 00 00 00 FF FF
+
+0x20 to 0x21: u16 Vertex counter
+0x22 to 0x23: u16 "Appended" vertex counter. More on this later
+0x24 to 0x27: u32 Offset to the vertex list
+0x28 to 0x2B: u32 Unknown, appears to always be 0x00000000
+0x2C to 0x2D: u16 Normal counter
+0x2E to 0x2F: u16 "Appended" normal counter
+0x30 to 0x31: s16 Bone rotation - X axis
+0x32 to 0x33: s16 Bone rotation - Y axis
+0x34 to 0x35: s16 Bone rotation - Z axis
+0x36 to 0x37: u16 Unknown, appears to always be 0x0000
+0x38 to 0x39: s16 Bone position - X axis
+0x3A to 0x3B: s16 Bone position - Y axis
+0x3C to 0x3D: s16 Bone position - Z axis
+0x3E to 0x3F: s16 Parent bone ID
+
+The vertex counter is pretty straight forward: read this many vertices in the
+table. Things get complicated with so-called "appended" vertices, because they
+are not standalone and depend on a vertex that has already been defined
+previously in the chain. I'll explain the relationship when we get to the vertex
+lists. What you need to know so far is that the amount of vertices to read for
+a given submesh is {vertex_counter} + {vtx_append_counter}. After that you need 
+to do the same for normals, but with {normal_counter} + {nrm_append_counter}.
+
+Bone rotations are still signed shorts that need to be normalized to Euler angle
+radians. Bone positions are also still signed shorts, though they only need to
+be rescaled to a float-friendly coordinate system.
+The following formula expressed in Blender Python will work:
+
+
+
+for bone_data in table1:
+    # Unpack rotation and position data
+    rotX, rotY, rotZ = bone_data["bone_rotation"]
+    posX, posY, posZ = bone_data["bone_position"]
+    
+    # Normalize int16 rotations (0–65535) to radians in the range [-π, π]
+    angleX = rotX / 32767.0 * 3.14159
+    angleY = rotY / 32767.0 * 3.14159
+    angleZ = rotZ / 32767.0 * 3.14159
+        
+    # Create a rotation matrix from Euler angles (assuming 'XYZ' order)
+    euler = Euler((angleX, angleY, angleZ), 'XYZ')
+    rotation = euler.to_matrix().to_4x4()
+        
+    # Convert position (assuming the positions need to be scaled by 1/16000)
+    trn = Matrix.Translation((posX / 16000.0, posY / 16000.0, posZ / 16000.0))
+        
+    # Combine translation and rotation (order: translation first, then rotation)
+    transform = trn @ rotation
+    bone_trans.append(transform)
+
+
+	
+Bone parenting is rather straightforward. If the value is 0xFFFF, there is no
+parent and the bone is standalone. This value is only ever used for the bones
+that are roots of the upper body and the legs. If it is any other value, then
+it's parent is the ID'd bone. Bones have no explicitly defined IDs, they are
+incrementing as they are being processed in sequence. Do note that bones inherit
+their parent's transformations and append their values to them.
+
+================================================================================
+2. Vertex lists
+================================================================================
+
+Vertex lists seem deceptively simple at first. I'll provide two blocks. Here's
+the first one:
+
+              00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
+            +------------------------------------------------
+0x00000A40  | D4 89 DE 3C 4C BC 50 BC E9 B4 BA 3C 00 00 80 3E
+0x00000A50  | 23 04 F8 3C F1 3F 4B BC AA DF AC 3C 01 00 80 3E
+0x00000A60  | 2D 94 DB 3C BF A9 2A 3A EE DB F3 3C 02 00 80 3E
+0x00000A70  | CC 19 F5 3C F4 41 17 3A B8 8B EF 3C 03 00 80 3E
+
+And here's a second one:
+
+              00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F
+            +------------------------------------------------
+0x000026F0  | 60 EE 9F 3D B6 5E 27 BD E9 26 A5 BD 88 01 00 3F
+0x00002700  | FB 75 0C 3D CE C1 21 3C E9 40 0C BD 89 01 4C 3E
+0x00002710  | 2F EA D4 3D FD 86 5C BD 6D 56 F6 BD 8A 01 4C 3F
+0x00002720  | 96 DB E9 B8 39 8D 1C BD B0 07 8C 3D 00 80 40 3F
+0x00002730  | 23 0A 17 3C F5 6F 18 BD C1 A7 81 3D 01 80 40 3F
+0x00002740  | FC AC 9C BA 9E FE FF 3A F3 E4 B6 3D 02 80 40 3F
+
+0xA40 to 0xA43: float Vertex X coordinate
+0xA44 to 0xA47: float Vertex Y coordinate
+0xA48 to 0xA4B: float Vertex Z coordinate
+0xA4C to 0xA4D: u16 Vertex index
+0xA4E to 0xA4F: halfFloat W component
+
+No, you eyes aren't fooling you, Namco encoded a W component directly into the
+model vertices. This is by all means seems very unconventional and needlessly 
+complicated for no reason, but there might be a good one in the end. Observe
+the following code snippet from the game:
+
+FMOV.S    @R5+, FR0
+FMOV.S    @R5+, FR1
+FMOV.S    @R5+, FR2
+FMOV.S    @R5+, FR3
+ADD       #$0C, R0
+FTRV      XMTRX, FV0
+
+R5 points to the current row in the vertex list. FR0-FR2 store the XYZ coords,
+and FR3 stores the W component and vertex index. Your initial gut reaction might
+be that the index shouldn't be there and that it will cause havoc, but that is
+not the case. I'm not sure if the least significant bytes are completely ignored
+or if they are so small that they make almost no observable difference, but the
+FTRV instruction only really needs the upper 4 bytes to perform a 4x4 matrix
+multiplication. To top it off, the results of the multiplication are then only
+written to FR0-FR2. FR3 stays unchanged!
+
+================================================================================
+2.1. Appended vertices
+================================================================================
+
+Now things are gonna get weird. Notice how in the middle of the second block the
+vertex ID suddenly jumped from 0x018A to 0x8001? What's that all about? Let's
+check out another code loop:
+
+FMOV.S    @R5+, FR0
+FMOV.S    @R5+, FR1
+FMOV.S    @R5+, FR2
+MOV.L     @R5,R0
+FMOV.S    @R5,FR3
+SHLD      R2,R0
+AND       R1,R0
+FTRV      XMTRX, FV0
+ADD       R4,R0
+FMOV.S    @R0+, FR4 
+FMOV.S    @R0+, FR5
+FMOV.S    @R0+, FR6
+FADD      FR4, FR0
+FADD      FR5, FR1
+FADD      FT6, FR2
+
+This loop executes right after the one above, and it's for "appended" vertices.
+The vertex index isn't actually at 0x8000 or higher, it's simply a bitmask.
+For any vertices whose ID is read as 0x8000 or higher, they will be AND-ed with 
+0xFFF, which will return the ID of the vertex it should append to. This is done
+by first doing the usual FTRV transform, and then *adding* that transform to the
+base vertex. 
+
+Here's a snippet from the Blender Python script that imports vertices:
+
+
+for vertex_idx in range(submesh["vertex_count"]+submesh["corrective_count"]):
+   vertex_x = read_little_endian_float(file)
+   vertex_y = read_little_endian_float(file)
+   vertex_z = read_little_endian_float(file)
+   w_component = read_little_endian_float(file)
+                
+   # Extract vertex index from w component's upper bits
+   w_bytes = struct.pack('f', w_component)
+   vertex_index = (w_bytes[1] << 8) | w_bytes[0]  # First 2 bytes have the idx
+               
+   # Get target vertex index (12 bits)
+   target_index = vertex_index & 0xFFF
+               
+   vertex = Vector((vertex_x, vertex_y, vertex_z, w_component))
+   transformed_vertex = bone_matrix @ vertex
+                
+   if vertex_index < 32768:
+      print(f"Vertex: {vertex_index}")
+      base_vertices[target_index].co = transformed_vertex.xyz
+		bone_vertex_indices[bone_index].add(target_index)
+   else:
+      print(f"Corrective: {vertex_index}")
+      base_vertices[target_index].co += transformed_vertex.xyz
+      bone_vertex_indices[bone_index].add(target_index)
+
+================================================================================
+3. Triangle strip table
+================================================================================
+
+Now let's get to the meat on the bone (bad pun, I know).
+Once all the vertices are set up, the game will go iterate through the triangle
+strip table until it is terminated. Since we're dealing with variable length 
+elements now, the visual structure will be a little different. Observe a random
+chunk from a triangle strip table:
+
+32000004
+C8013202
+0F3F683F
+CC013602
+0C3F683F
+CD013702
+0E3F583F
+2605AD85
+DF3E513F
+
+32000004
+CB013502
+C53E593F
+2702A802
+C33E513F
+2605AD05
+DF3E513F
+4B05CF85
+C23E553F
+
+32000003
+CC013602
+0C3F683F
+2505AC05
+DF3E7E3F
+C9013382
+0E3F773F
+
+00000000
+
+33000004
+2504B004
+413F233F
+2304AE04
+5C3F2E3F
+2404AF04
+413F2B3F
+2804B384
+413F333F
+
+33000005
+3804C204
+563F093F
+3904C304
+5E3F113F
+3A04C404
+473F123F
+2504B004
+413F233F
+4806DF86
+413F133F
+
+Focusing on the first one:
+32000004
+C8013202
+0F3F683F
+CC013602
+0C3F683F
+CD013702
+0E3F583F
+2605AD85
+DF3E513F
+
+As you can see, it's not a conventional, single triangle strip that one blindly
+iterates over. It's split into smaller "substrips". A strip is terminated by
+a 0x00000000 word. This indicates that the following substrip should start from
+scratch and not append it's vertices to the previous one.
+
+Every substrip begins with a 32-bit header.
+The first byte (0x32) denotes a sort of material ID, indicating which 256x256
+texture should be used. The next two bytes are always 0x00. The last byte is a
+1-indexed counter (0x04) telling the program how many triangles will form the
+given "substrip". In the example above that means there are gonna be four
+double-words that define it. Let's take the first substrip's first triangle as
+an example:
+
+C8013202
+0F3F683F
+
+The structure of a strip double-word is as follows:
+u16 Vertex index (0x01C8)
+u16 Vertex color (0x0232)
+u16 U coordinate (0x3F0F)
+u16 V coordinate (0x3F68)
+
+The V coordinate should be flipped by subtracting from 1.0.
+
+These cycles repeat until two 0x00000000 words are hit in a row, indicating that
+the triangle strip table has ended.
+
+================================================================================
+4. Other data
+================================================================================
+
+Right after the triangle strip table and up until EoF, there's another remnant
+from the arcade version: the physics properties table.
+
+Unfortunately, I never actually got around to properly reversing this data
+structure, but it does play a slightly different role compared to arcade. 
+While it defined all per-vertex physics objects on Arcade without using bones,
+on Dreamcast it tells bone-assigned physics submeshes how they should interact
+with the host model, the environment, and to movement (jiggling and whatnot).
+
